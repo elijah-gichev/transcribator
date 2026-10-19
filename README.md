@@ -9,6 +9,16 @@ Push-to-talk диктовка для macOS на базе открытой мод
 ⌥ (Right Option)  →  🎙 запись  →  GigaAM-v3 e2e  →  «Привет, как дела?» → Cmd+V в активное окно
 ```
 
+## Как это работает
+
+```mermaid
+flowchart LR
+    K["Right ⌥"] --> R["запись"] --> V["VAD"] --> A["GigaAM-v3"] --> P["текст в поле"]
+```
+
+Подробные диаграммы — компоненты, последовательности записи и распознавания, протокол,
+состояния иконки, смена модели, тайминги — в [docs/architecture.md](docs/architecture.md).
+
 ## Что внутри
 
 | Компонент | Роль |
@@ -16,6 +26,7 @@ Push-to-talk диктовка для macOS на базе открытой мод
 | `macapp/` | Swift-приложение: иконка в меню-баре, глобальная клавиша, запись с микрофона, вставка текста |
 | `backend/worker.py` | Python-сайдкар: держит GigaAM в памяти, общается с приложением построчным JSON через pipe |
 | `backend/cli.py` | Проверка распознавания по файлу, без GUI |
+| `docs/architecture.md` | Диаграммы: как всё работает |
 | `scripts/` | Установка зависимостей и сборка `.app` |
 
 Модель: `v3_e2e_rnnt` по умолчанию — end-to-end версия, сразу выдаёт текст с пунктуацией,
@@ -33,7 +44,7 @@ Push-to-talk диктовка для macOS на базе открытой мод
 
 ```bash
 make setup     # .venv + gigaam + torch, скачивает веса модели
-make build     # собирает build/Transcribator.app (ad-hoc подпись)
+make build     # собирает build/Transcribator.app (подпись — Apple Development / ad-hoc)
 open build/Transcribator.app
 ```
 
