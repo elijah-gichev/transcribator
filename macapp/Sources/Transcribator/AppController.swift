@@ -16,6 +16,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var isTestRecording = false
     private var hotkeyError: String?
     private var permissionTimer: Timer?
+    private var progressTimer: Timer?
+    private var backendStartedAt: Date?
+    private var launchedBackend: (model: String, device: String)?
 
     // MARK: - Lifecycle
 
@@ -150,13 +153,46 @@ final class AppController: NSObject, NSApplicationDelegate {
             rebuildMenu()
             return
         }
+        launchedBackend = (config.model, config.device)
+        backendStartedAt = Date()
         Log.write("backend: \(paths.python) \(paths.script) model=\(config.model) device=\(config.device)")
+        startProgressTimer()
         sidecar.start(
             python: paths.python,
             script: paths.script,
             model: config.model,
             device: config.device
         )
+    }
+
+    /// Перезапускаем бэкенд только если менялись модель/устройство.
+    private func backendNeedsRestart() -> Bool {
+        let config = ConfigStore.shared.config.backend
+        guard let launched = launchedBackend else { return true }
+        return launched.model != config.model || launched.device != config.device || !sidecar.isReady
+    }
+
+    /// Обновляет меню раз в секунду, пока модель грузится (видно, что процесс жив).
+    private func startProgressTimer() {
+        progressTimer?.invalidate()
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+            if self.sidecar.isReady {
+                timer.invalidate()
+                self.progressTimer = nil
+                self.backendStartedAt = nil
+            }
+            self.rebuildMenu()
+        }
+    }
+
+    /// Готова ли модель на диске (иначе её будут качать 220–430 МБ).
+    private func modelIsCached(_ model: String) -> Bool {
+        let path = ("~/.cache/gigaam/\(model).ckpt" as NSString).expandingTildeInPath
+        return FileManager.default.fileExists(atPath: path)
     }
 
     // MARK: - Hotkey
@@ -168,7 +204,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         let ok = hotkey.start(keyCode: config.keyCode) { _ in }
         hotkeyError = ok ? nil : "нет доступа к перехвату клавиатуры"
-        Log.write("hotkey: keyCode=\(config.keyCode) mode=\(config.mode) started=\(ok)")
+        Log.write("hotkey: keyCode=\(config.keyCode) mode=\(config.mode) started=\(ok) via=\(hotkey.mechanism)")
         rebuildMenu()
     }
 
@@ -326,6 +362,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         header.isEnabled = false
         menu.addItem(header)
 
+        if !sidecar.isReady, !sidecar.lastLogLine.isEmpty {
+            let progress = NSMenuItem(title: sidecar.lastLogLine, action: nil, keyEquivalent: "")
+            progress.isEnabled = false
+            menu.addItem(progress)
+        }
+
         let hint = NSMenuItem(title: hintLine(), action: nil, keyEquivalent: "")
         hint.isEnabled = false
         menu.addItem(hint)
@@ -393,6 +435,14 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func statusLine() -> String {
         if sidecar.isReady { return "Готов: " + sidecar.state.description }
+        if case .starting = sidecar.state, let startedAt = backendStartedAt {
+            let elapsed = Int(Date().timeIntervalSince(startedAt).rounded())
+            let model = ConfigStore.shared.config.backend.model
+            if !modelIsCached(model) {
+                return "Скачиваю \(model)… \(elapsed) с (первый раз, 220–430 МБ)"
+            }
+            return "Загружаю \(model)… \(elapsed) с"
+        }
         return sidecar.state.description
     }
 
@@ -566,12 +616,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// Вызывается из окна настроек после сохранения.
     func applyConfig() {
         startHotkey()
-        let config = ConfigStore.shared.config
-        if case let .ready(model, device) = sidecar.state {
-            if model != config.backend.model || device != config.backend.device {
-                startBackend()
-            }
-        } else {
+        if backendNeedsRestart() {
             startBackend()
         }
         updateIcon()

@@ -147,12 +147,9 @@ class Engine:
 
         started = time.perf_counter()
         log(f"loading {model_name} on {self.device}")
-        self.model = gigaam.load_model(
-            model_name,
-            fp16_encoder=self.device.type != "cpu",
-            device=self.device,
-        )
+        self.model = self._load(model_name)
         self.load_ms = int((time.perf_counter() - started) * 1000)
+        self.warmup_ms = 0
         log(f"loaded in {self.load_ms} ms")
 
         # Прогрев: первый инференс на MPS/Metal компилирует графы и в разы медленнее.
@@ -160,9 +157,37 @@ class Engine:
         try:
             rng = np.random.default_rng(0)
             self._transcribe_chunk((rng.standard_normal(TARGET_SAMPLE_RATE * 2) * 1e-3).astype(np.float32))
-            log(f"warmup in {int((time.perf_counter() - warmup_started) * 1000)} ms")
         except Exception:  # noqa: BLE001
             traceback.print_exc()
+        self.warmup_ms = int((time.perf_counter() - warmup_started) * 1000)
+        log(f"warmup in {self.warmup_ms} ms")
+
+    @staticmethod
+    def _purge_cache(model_name: str) -> None:
+        """Удаляет битые файлы модели из кэша (~/.cache/gigaam)."""
+        import gigaam
+
+        name = model_name if model_name in gigaam._MODEL_HASHES else f"v3_{model_name}"
+        cache = os.path.expanduser("~/.cache/gigaam")
+        for suffix in (".ckpt", "_tokenizer.model"):
+            path = os.path.join(cache, name + suffix)
+            if os.path.exists(path):
+                os.remove(path)
+                log(f"removed broken cache file {path}")
+
+    def _load(self, model_name: str):
+        """Загружает модель; при битом кэше (недокачанный ckpt) качает заново один раз."""
+        import gigaam
+
+        kwargs = dict(fp16_encoder=self.device.type != "cpu", device=self.device)
+        try:
+            return gigaam.load_model(model_name, **kwargs)
+        except AssertionError as err:
+            if "checksum" not in str(err):
+                raise
+            log(f"checksum mismatch: {err}")
+            self._purge_cache(model_name)
+            return gigaam.load_model(model_name, **kwargs)
 
     @property
     def head_dtype(self):
@@ -263,6 +288,7 @@ def main() -> int:
             "model": engine.model_name,
             "device": str(engine.device),
             "load_ms": engine.load_ms,
+            "warmup_ms": engine.warmup_ms,
         }
     )
 

@@ -24,6 +24,13 @@ final class ASRSidecar {
 
     var onState: ((State) -> Void)?
     private(set) var logLines: [String] = []
+    /// Последняя содержательная строка stderr сайдкара (для меню).
+    var lastLogLine: String {
+        let text = logLines.last ?? ""
+        let tail = text.split(separator: "\r").last.map(String.init) ?? text
+        let trimmed = tail.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.count > 90 ? String(trimmed.suffix(90)) : trimmed
+    }
 
     private var process: Process?
     private var stdin: FileHandle?
@@ -95,6 +102,15 @@ final class ASRSidecar {
         if let process, process.isRunning {
             try? stdin?.write(contentsOf: Data("{\"cmd\":\"shutdown\"}\n".utf8))
             process.terminate()
+            // Ждём выхода, чтобы не держать GPU/память под две модели сразу.
+            var waited: Double = 0
+            while process.isRunning, waited < 2.0 {
+                usleep(50_000)
+                waited += 0.05
+            }
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
         }
         process = nil
         stdin = nil
@@ -215,6 +231,12 @@ final class ASRSidecar {
             self.logLines.append(text)
             if self.logLines.count > 400 { self.logLines.removeFirst(self.logLines.count - 400) }
             FileHandle.standardError.write(Data("[sidecar] \(text)".utf8))
+            // в файл пишем только содержательное (без прогресс-баров tqdm)
+            let tail = text.split(separator: "\r").last.map(String.init) ?? text
+            let line = tail.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !line.isEmpty, line.count < 300 {
+                Log.write("sidecar: \(line)")
+            }
         }
     }
 }
