@@ -20,9 +20,13 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var backendStartedAt: Date?
     private var launchedBackend: (model: String, device: String)?
 
+    /// Буква «T» для меню-бара — та же, что на иконке приложения.
+    private let menuBarIcon = MenuBarIcon.letter()
+
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        applyAppIcon()
         buildMenu()
         updateIcon()
 
@@ -46,6 +50,56 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         if CommandLine.arguments.contains("--test-recording") {
             runSelfTestRecording()
+        }
+
+        if let index = CommandLine.arguments.firstIndex(of: "--dump-menu-icon"),
+           CommandLine.arguments.count > index + 1 {
+            dumpMenuBarIcon(to: CommandLine.arguments[index + 1])
+        }
+    }
+
+    /// Сохраняет реальное отрисованное состояние кнопки в меню-баре (для проверки без скриншотов).
+    private func dumpMenuBarIcon(to path: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            guard let button = self.statusItem.button else {
+                Log.write("dump-icon: нет кнопки")
+                NSApp.terminate(nil)
+                return
+            }
+            button.display()
+            button.layoutSubtreeIfNeeded()
+            let scale: CGFloat = 4
+            let size = button.bounds.size
+            let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: Int(max(size.width, 22) * scale),
+                pixelsHigh: Int(max(size.height, 22) * scale),
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            )
+            if let rep {
+                rep.size = size
+                button.cacheDisplay(in: button.bounds, to: rep)
+                if let data = rep.representation(using: .png, properties: [:]) {
+                    try? data.write(to: URL(fileURLWithPath: path))
+                    Log.write("dump-icon: \(path) \(Int(size.width))x\(Int(size.height))")
+                }
+            }
+            NSApp.terminate(nil)
+        }
+    }
+
+    /// Иконка бандла — для алертов и диалогов (в Dock приложения нет: LSUIElement).
+    private func applyAppIcon() {
+        if let icon = NSImage(named: "AppIcon") {
+            NSApp.applicationIconImage = icon
+        } else if let path = Bundle.main.path(forResource: "AppIcon", ofType: "icns") {
+            NSApp.applicationIconImage = NSImage(contentsOfFile: path)
         }
     }
 
@@ -322,35 +376,28 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func updateIcon() {
         guard let button = statusItem.button else { return }
 
-        let symbol: String
         let tint: NSColor?
         var tooltip = "Transcribator"
 
         if isRecording {
-            symbol = "mic.fill"
             tint = .systemRed
             tooltip = "Запись… отпустите клавишу"
         } else if isTranscribing {
-            symbol = "waveform"
             tint = .systemOrange
             tooltip = "Распознаю…"
         } else if !sidecar.isReady {
-            symbol = "hourglass"
-            tint = .secondaryLabelColor
+            tint = .tertiaryLabelColor
             tooltip = sidecar.state.description
         } else if hotkeyError != nil {
-            symbol = "exclamationmark.triangle"
             tint = .systemYellow
             tooltip = "Нет доступа к перехвату клавиатуры"
         } else {
-            symbol = "mic"
             tint = nil
             tooltip = "Transcribator готов"
         }
 
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
-        image?.isTemplate = true
-        button.image = image
+        button.image = menuBarIcon
+        button.imagePosition = .imageOnly
         button.contentTintColor = tint
         button.toolTip = tooltip
     }

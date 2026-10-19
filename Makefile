@@ -1,4 +1,7 @@
-.PHONY: setup build run cli clean
+.PHONY: setup build run cli icon clean
+
+icon:
+	swift scripts/make_icon.swift assets/AppIcon.icns
 
 setup:
 	./scripts/setup_backend.sh
